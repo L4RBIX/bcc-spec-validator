@@ -21,7 +21,7 @@ from validator.report_md import render_markdown
 from validator.runinfo import RunInfo, agent_version, almaty_now, count_lines, file_sha256
 from validator.segment import segment
 from validator.simulate import simulate
-from validator.verify import is_duplicate_reason, verify, write_dropped
+from validator.verify import verify, write_dropped
 
 ARTIFACTS_DIR = Path("out")
 LLM_LOG = ARTIFACTS_DIR / "llm_log.jsonl"
@@ -90,7 +90,7 @@ def run(args: argparse.Namespace) -> tuple[int, int, int]:
             file=sys.stderr,
         )
 
-    dup = sum(1 for d in dropped if is_duplicate_reason(d.reason))
+    status = Counter(d.status for d in dropped)
     info = RunInfo(
         doc_path=args.doc,
         sha256=file_sha256(args.doc),
@@ -99,8 +99,9 @@ def run(args: argparse.Namespace) -> tuple[int, int, int]:
         model=llm.model_name(),
         agent_version=agent_version(),
         llm_calls=(count_lines(LLM_LOG) - llm_log_before) if LLM_LOG.exists() else None,
-        dropped_no_quote=len(dropped) - dup,
-        dropped_duplicates=dup,
+        dropped_no_quote=status["dropped"],
+        dropped_duplicates=status["duplicate"],
+        partial_quotes=sum(len(d.lost_quotes) for d in dropped if d.status == "partial"),
     )
     md = render_markdown(info, blocks, reqs, findings)
     _write(args.report, md)

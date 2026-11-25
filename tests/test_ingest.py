@@ -80,3 +80,14 @@ def test_unsupported_format(tmp_path):
 def test_normalize_spaces_keeps_quotes():
     assert normalize_spaces("10 000 ₸ «да»​") == "10 000 ₸ «да»"
     assert normalize_spaces("ﬁeld") == "field"
+
+
+@pytest.mark.parametrize("fixture", ["sample_md", "sample_pdf"])
+def test_hard_line_break_and_bold_line_heading(fixture, request):
+    blocks = load(request.getfixturevalue(fixture))
+    paras = [b.text for b in blocks if b.section.endswith("> Коды")]
+    assert paras[:3] == ["Коды", "Код 1. Первый короткий ответ.", "Код 2. Второй короткий ответ."]
+    pseudo = next(b for b in blocks if b.text == "777")
+    assert pseudo.kind == "heading"
+    after = blocks[blocks.index(pseudo) + 1]
+    assert after.text == "Текст под псевдозаголовком." and after.section.endswith("Коды > 777")

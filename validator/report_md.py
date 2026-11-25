@@ -69,11 +69,24 @@ def cell(text: str) -> str:
     return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", "<br>").strip()
 
 
-def format_location(block: Block | None, input_format: str) -> str:
+def root_heading(blocks: list[Block]) -> str | None:
+    """Заголовок верхнего уровня, если он в документе единственный (обычно название документа)."""
+    tops = {b.text for b in blocks if b.kind == "heading" and " > " not in b.section}
+    return tops.pop() if len(tops) == 1 else None
+
+
+def display_section(section: str, root: str | None) -> str:
+    """Путь раздела для вывода: без единственного корневого H1. Данные блока не меняются."""
+    if root and section.startswith(root + " > "):
+        return section[len(root) + 3 :]
+    return section
+
+
+def format_location(block: Block | None, input_format: str, root: str | None = None) -> str:
     """«раздел «X», стр. N, строка M» -- ссылка на место в документе."""
     if block is None:
         return "место не определено"
-    parts = [f"раздел «{block.section or 'без раздела'}»"]
+    parts = [f"раздел «{display_section(block.section, root) or 'без раздела'}»"]
     if block.page is not None:
         parts.append(f"стр. {block.page}")
     if block.line is not None:
@@ -92,14 +105,15 @@ class _Ctx:
         self.req_ids = {r.req_id for r in reqs}
         self.findings = findings
         self.index = DocIndex(blocks)
+        self.root = root_heading(blocks)
 
     def quote_location(self, quote: str) -> str:
         m = self.index.find(quote)
-        return format_location(m.first if m else None, self.run.input_format)
+        return format_location(m.first if m else None, self.run.input_format, self.root)
 
     def req_location(self, req: Requirement) -> str:
         block = self.by_block.get(req.block_ids[0]) if req.block_ids else None
-        return format_location(block, self.run.input_format)
+        return format_location(block, self.run.input_format, self.root)
 
 
 def render_markdown(
@@ -131,8 +145,9 @@ def _passport(ctx: _Ctx) -> str:
         ("Вызовов LLM", llm_calls),
         (
             "Отброшено верификатором",
-            f"{r.dropped_no_quote + r.dropped_duplicates} (цитата не найдена: {r.dropped_no_quote}, "
-            f"дубликаты: {r.dropped_duplicates})",
+            f"находок: {r.dropped_no_quote + r.dropped_duplicates} (цитаты не подтвердились: "
+            f"{r.dropped_no_quote}, дубликаты: {r.dropped_duplicates}); отдельных цитат в принятых "
+            f"находках: {r.partial_quotes}",
         ),
     ]
     lines = ["## 1. Паспорт прогона", "", "| Поле | Значение |", "| :--- | :--- |"]

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
+
 from validator.schema import Block, Finding
-from validator.verify import DocIndex, normalize, verify
+from validator.verify import DocIndex, normalize, verify, write_dropped
 
 BLOCKS = [
     Block(block_id="B-001", section="Док", page=1, line=1, kind="heading", text="Требования"),
@@ -34,11 +36,11 @@ BLOCKS = [
 ]
 
 
-def make(quotes, criterion="unambiguous", source="llm", confidence=0.5, req_ids=("R-01",)):
+def make(quotes, criterion="unambiguous", source="llm", confidence=0.5, req_ids=("R-01",), scope="item"):
     return Finding(
         finding_id="",
         req_ids=list(req_ids),
-        scope="item",
+        scope=scope,
         criterion=criterion,
         severity="major",
         quotes=list(quotes),
@@ -97,6 +99,7 @@ def test_dedup_prefers_rule_and_merges_req_ids():
     assert kept[0].source == "rule"
     assert set(kept[0].req_ids) == {"R-02", "R-03"}
     assert len(dropped) == 1 and dropped[0].reason.startswith("дубликат")
+    assert dropped[0].status == "duplicate"
 
 
 def test_dedup_same_source_prefers_confidence():
@@ -127,3 +130,53 @@ def test_unknown_criterion_and_empty_quotes_dropped():
     kept, dropped = verify([make(["Отчёт"], criterion="beauty"), make([])], BLOCKS)
     assert not kept
     assert {d.reason.split(" ")[0] for d in dropped} == {"неизвестный", "нет"}
+
+
+PHANTOM = "эта фраза в документе отсутствует полностью и целиком"
+
+
+def test_partial_quotes_dropped_one_by_one(tmp_path):
+    f = make(["Отчёт формируется ежедневно", PHANTOM])
+    kept, dropped = verify([f], BLOCKS)
+    assert len(kept) == 1
+    assert kept[0].quotes == ["Отчёт формируется ежедневно"]
+    assert len(dropped) == 1
+    rec = dropped[0]
+    assert rec.status == "partial"
+    assert rec.lost_quotes == [PHANTOM]
+    assert rec.assigned_id == kept[0].finding_id == "F-001"
+    out = tmp_path / "dropped.jsonl"
+    write_dropped(dropped, out)
+    row = json.loads(out.read_text(encoding="utf-8").strip())
+    assert row["status"] == "partial" and row["lost_quotes"] == [PHANTOM]
+
+
+def test_all_quotes_missing_drops_finding():
+    kept, dropped = verify([make([PHANTOM, "и эта тоже не встречается нигде в тексте"])], BLOCKS)
+    assert not kept
+    assert dropped[0].status == "dropped" and len(dropped[0].lost_quotes) == 2
+
+
+def test_set_consistent_needs_two_confirmed_quotes():
+    one = make(["Отчёт формируется ежедневно", PHANTOM], criterion="set_consistent", scope="set")
+    kept, dropped = verify([one], BLOCKS)
+    assert not kept
+    assert len(dropped) == 1 and dropped[0].status == "dropped"
+    assert "нужно 2" in dropped[0].reason and dropped[0].lost_quotes == [PHANTOM]
+
+
+def test_set_consistent_with_two_quotes_kept_and_partial_logged():
+    f = make(
+        ["Отчёт формируется ежедневно", "Система отвечает быстро", PHANTOM],
+        criterion="set_consistent",
+        scope="set",
+    )
+    kept, dropped = verify([f], BLOCKS)
+    assert len(kept) == 1 and len(kept[0].quotes) == 2
+    assert [d.status for d in dropped] == ["partial"]
+
+
+def test_set_consistent_same_place_twice_is_not_two_quotes():
+    f = make(["Система отвечает быстро", "система отвечает быстро"], criterion="set_consistent", scope="set")
+    kept, dropped = verify([f], BLOCKS)
+    assert not kept and dropped[0].status == "dropped"

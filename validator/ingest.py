@@ -23,6 +23,10 @@ _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 _MD_TABLE_SEP_RE = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$")
 _MD_HR_RE = re.compile(r"^\s*([-*_])(\s*\1){2,}\s*$")
 _MD_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+_MD_BOLD_LINE_RE = re.compile(r"^(\*\*|__)(?!\s)(.+?)(?<!\s)\1$")
+_PSEUDO_HEADING_LEVEL = 7  # строка целиком жирным: заголовок ниже h6
+_PSEUDO_HEADING_MAX = 120
+_SENTENCE_END = (".", ":", ";", ",")
 
 
 class UnsupportedFormatError(ValueError):
@@ -76,6 +80,15 @@ class _Sections:
 # ---------------------------------------------------------------- Markdown
 
 
+def _is_pseudo_heading(text: str) -> bool:
+    """Короткая строка без завершающей пунктуации и маркера списка -- кандидат в заголовок."""
+    return (
+        0 < len(text) <= _PSEUDO_HEADING_MAX
+        and not text.endswith(_SENTENCE_END)
+        and not _BULLET_RE.match(text)
+    )
+
+
 def _strip_inline_md(text: str) -> str:
     """Убирает inline-разметку Markdown (жирный, курсив, код, ссылки), оставляя текст."""
     text = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", text)
@@ -118,9 +131,14 @@ def _load_md(path: Path) -> Iterator[RawBlock]:
                 yield sections.path, None, lineno, "code", "\n".join(body).strip("\n")
             continue
         heading = _MD_HEADING_RE.match(stripped)
+        bold_line = _MD_BOLD_LINE_RE.match(stripped)
         if heading:
             title = _strip_inline_md(heading.group(2))
             sections.enter(len(heading.group(1)), title)
+            yield sections.path, None, lineno, "heading", title
+        elif bold_line and _is_pseudo_heading(_strip_inline_md(stripped)):
+            title = _strip_inline_md(stripped)
+            sections.enter(_PSEUDO_HEADING_LEVEL, title)
             yield sections.path, None, lineno, "heading", title
         elif stripped.startswith("|"):
             if not _MD_TABLE_SEP_RE.match(stripped):
@@ -208,10 +226,13 @@ def _load_pdf(path: Path) -> Iterator[RawBlock]:
     sections = _Sections()
     for page_no, (page, tables, blocks) in enumerate(pages, start=1):
         rects = [tuple(t.bbox) for t in tables]
-        tops = _dedupe_tops(sorted(ln["bbox"][1] for b in blocks for ln in b["lines"] if _line_text(ln)))
+        text_lines = [ln for b in blocks for ln in b["lines"] if _line_text(ln)]
+        tops = _dedupe_tops(sorted(ln["bbox"][1] for ln in text_lines))
+        free = [ln["bbox"][2] for ln in text_lines if not _inside(ln["bbox"], rects)]
+        right_edge = max(free, default=page.rect.x1)
         items = [it for t in tables for it in _pdf_table_rows(page, t)]
         for b in blocks:
-            items.extend(_pdf_text_block(b, rects, levels, bold_level))
+            items.extend(_pdf_text_block(b, rects, levels, bold_level, right_edge))
         items.sort(key=lambda it: it.y)
         for it in _merge_code(items):
             line = max(1, bisect.bisect_right(tops, it.y + 1.0))
@@ -257,24 +278,29 @@ def _dedupe_tops(tops: list[float]) -> list[float]:
 def _is_heading_line(text: str, spans: list[dict], size: float, levels: dict[float, int]) -> bool:
     if size in levels:
         return True
-    return (
-        all(_span_is_bold(s) for s in spans)
-        and len(text) <= 120
-        and not text.endswith((".", ":", ";", ","))
-        and not _BULLET_RE.match(text)
-    )
+    return all(_span_is_bold(s) for s in spans) and _is_pseudo_heading(text)
+
+
+def _hard_break(prev_x1: float, line: dict, text: str, right_edge: float) -> bool:
+    """Жёсткий перенос: первое слово строки поместилось бы в остаток предыдущей строки."""
+    width = line["bbox"][2] - line["bbox"][0]
+    char_w = width / max(len(text), 1)
+    first_word = text.split(maxsplit=1)[0]
+    return right_edge - prev_x1 > char_w * (len(first_word) + 1)
 
 
 def _pdf_text_block(
-    block: dict, table_rects: list, levels: dict[float, int], bold_level: int
+    block: dict, table_rects: list, levels: dict[float, int], bold_level: int, right_edge: float
 ) -> Iterator[_PdfItem]:
     """Разбирает текстовый блок PyMuPDF на заголовки, код, пункты списков и абзацы.
 
-    Строки одного абзаца (перенос по ширине страницы) склеиваются через пробел.
+    Строки, перенесённые по ширине страницы, склеиваются через пробел; жёсткий перенос
+    (строка закончилась заметно раньше правого края) начинает новый абзац.
     """
     para: list[str] = []
     para_y: float | None = None
     para_kind = "para"
+    prev_x1 = right_edge
 
     def flush() -> Iterator[_PdfItem]:
         nonlocal para, para_y, para_kind
@@ -303,9 +329,12 @@ def _pdf_text_block(
             text = _BULLET_RE.sub("", text, count=1)
             if text in _BULLET_ONLY:
                 continue
+        elif para and _hard_break(prev_x1, ln, text, right_edge):
+            yield from flush()
         if para_y is None:
             para_y = y
         para.append(text)
+        prev_x1 = ln["bbox"][2]
     yield from flush()
 
 

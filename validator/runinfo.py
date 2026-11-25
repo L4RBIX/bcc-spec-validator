@@ -26,6 +26,7 @@ class RunInfo:
     llm_calls: int | None = None
     dropped_no_quote: int = 0
     dropped_duplicates: int = 0
+    partial_quotes: int = 0  # цитаты, выкинутые из принятых находок
 
     @property
     def doc_name(self) -> str:

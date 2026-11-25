@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from validator.report_md import render_markdown, verdict
+from validator.report_md import display_section, render_markdown, root_heading, verdict
 from validator.runinfo import RunInfo, almaty_now
 from validator.schema import Block, Finding, Requirement
 
@@ -93,3 +93,38 @@ def test_verdict_levels():
     assert verdict([finding(severity="major")], "gemini").code == "conditional"
     assert verdict([finding()], "gemini").code == "no-go"
     assert "fake" in verdict([], "fake").text
+
+
+def _heading(bid: str, section: str) -> Block:
+    return Block(
+        block_id=bid, section=section, page=None, line=1, kind="heading", text=section.split(" > ")[-1]
+    )
+
+
+def test_single_root_h1_hidden_in_output_only():
+    blocks = [
+        _heading("B-001", "Док"),
+        _heading("B-002", "Док > ФТ"),
+        Block(
+            block_id="B-003",
+            section="Док > ФТ",
+            page=None,
+            line=3,
+            kind="para",
+            text="Ответ приходит быстро.",
+        ),
+    ]
+    assert root_heading(blocks) == "Док"
+    assert display_section("Док > ФТ", "Док") == "ФТ"
+    assert display_section("Док", "Док") == "Док"
+    req = REQS[0].model_copy(update={"block_ids": ["B-003"]})
+    md = render_markdown(run_info(), blocks, [req], [finding()])
+    assert "раздел «ФТ», строка 3" in md
+    assert "раздел «Док > ФТ»" not in md
+    assert blocks[2].section == "Док > ФТ"  # сами данные не меняются
+
+
+def test_two_root_headings_keep_full_path():
+    blocks = [_heading("B-001", "Часть 1"), _heading("B-002", "Часть 2"), _heading("B-003", "Часть 2 > ФТ")]
+    assert root_heading(blocks) is None
+    assert display_section("Часть 2 > ФТ", None) == "Часть 2 > ФТ"

@@ -8,9 +8,9 @@ partial_ratio >= FUZZY_THRESHOLD), заменяется дословным фр�
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel
 from rapidfuzz import fuzz
@@ -20,6 +20,8 @@ from validator.schema import CRITERIA, Block, Finding
 FUZZY_THRESHOLD = 90.0
 MIN_FUZZY_LEN = 12  # короче этого нечёткий поиск не применяется: слишком много ложных совпадений
 DUPLICATE_REASON = "дубликат другой находки (та же цитата и критерий)"
+# Минимум подтверждённых цитат: противоречие доказывается только двумя местами документа.
+MIN_QUOTES = {"set_consistent": 2}
 SOURCE_PRIORITY = {"rule": 0, "simulation": 1, "llm": 2}
 
 _QUOTE_CHARS = {"«": '"', "»": '"', "“": '"', "”": '"', "„": '"', "‟": '"'}
@@ -142,10 +144,17 @@ class DocIndex:
 
 
 class DroppedFinding(BaseModel):
-    """Находка, отброшенная верификатором, и причина."""
+    """Отброшенная находка (или отброшенные цитаты принятой находки) и причина.
+
+    status: dropped -- находка отброшена целиком; partial -- находка принята, но часть цитат
+    не подтвердилась (они в lost_quotes); duplicate -- поглощена другой находкой.
+    """
 
     finding: Finding
     reason: str
+    status: Literal["dropped", "partial", "duplicate"] = "dropped"
+    lost_quotes: list[str] = []
+    assigned_id: str | None = None  # для partial: F-id принятой находки
 
 
 def _dedup_key(f: Finding) -> tuple[str, str]:
@@ -161,10 +170,13 @@ def _better(a: Finding, b: Finding) -> bool:
 def verify(findings: list[Finding], blocks: list[Block]) -> tuple[list[Finding], list[DroppedFinding]]:
     """Проверяет цитаты находок по документу, дедуплицирует и нумерует F-001... в порядке документа.
 
-    Возвращает (принятые находки, отброшенные с причинами).
+    Ненайденные цитаты выкидываются по одной; находка остаётся, если подтверждено не меньше
+    MIN_QUOTES (по умолчанию 1, для set_consistent -- 2). Возвращает (принятые находки,
+    отброшенные записи со статусами dropped / partial / duplicate).
     """
     index = DocIndex(blocks)
     dropped: list[DroppedFinding] = []
+    partial: list[DroppedFinding] = []
     checked: list[tuple[int, Finding]] = []
     for f in findings:
         reason = _structural_problem(f)
@@ -172,14 +184,26 @@ def verify(findings: list[Finding], blocks: list[Block]) -> tuple[list[Finding],
             dropped.append(DroppedFinding(finding=f, reason=reason))
             continue
         matches = [index.find(q) for q in f.quotes]
-        missing = [q for q, m in zip(f.quotes, matches, strict=True) if m is None]
-        if missing:
-            dropped.append(
-                DroppedFinding(finding=f, reason="цитата не найдена в документе: " + " | ".join(missing))
-            )
-            continue
         found = [m for m in matches if m is not None]
-        fixed = f.model_copy(update={"quotes": _unique([m.fragment for m in found])})
+        missing = [q for q, m in zip(f.quotes, matches, strict=True) if m is None]
+        fragments = _unique([m.fragment for m in found])
+        need = MIN_QUOTES.get(f.criterion, 1)
+        if len(fragments) < need:
+            what = "цитата не найдена в документе"
+            if found:
+                what = f"подтверждено цитат {len(fragments)}, для критерия {f.criterion} нужно {need}"
+            dropped.append(DroppedFinding(finding=f, reason=what, lost_quotes=missing))
+            continue
+        fixed = f.model_copy(update={"quotes": fragments})
+        if missing:
+            partial.append(
+                DroppedFinding(
+                    finding=f,
+                    reason="часть цитат не найдена в документе, находка принята по остальным",
+                    status="partial",
+                    lost_quotes=missing,
+                )
+            )
         checked.append((min(m.start for m in found), fixed))
 
     best: dict[tuple[str, str], tuple[int, Finding]] = {}
@@ -192,11 +216,15 @@ def verify(findings: list[Finding], blocks: list[Block]) -> tuple[list[Finding],
         winner, loser = (f, old) if _better(f, old) else (old, f)
         merged = winner.model_copy(update={"req_ids": _unique(winner.req_ids + loser.req_ids)})
         best[key] = (min(pos, old_pos), merged)
-        dropped.append(DroppedFinding(finding=loser, reason=DUPLICATE_REASON))
+        dropped.append(DroppedFinding(finding=loser, reason=DUPLICATE_REASON, status="duplicate"))
 
     ordered = sorted(best.values(), key=lambda pf: (pf[0], list(CRITERIA).index(pf[1].criterion)))
     kept = [f.model_copy(update={"finding_id": f"F-{i:03d}"}) for i, (_, f) in enumerate(ordered, start=1)]
-    return kept, dropped
+    ids = {_dedup_key(f): f.finding_id for f in kept}
+    for p in partial:
+        first = index.find(next(q for q in p.finding.quotes if q not in p.lost_quotes))
+        p.assigned_id = ids.get((normalize(first.fragment), p.finding.criterion)) if first else None
+    return kept, dropped + partial
 
 
 def _structural_problem(f: Finding) -> str | None:
@@ -223,8 +251,3 @@ def write_dropped(dropped: list[DroppedFinding], path: Path) -> None:
     with path.open("w", encoding="utf-8") as fh:
         for d in dropped:
             fh.write(json.dumps(d.model_dump(), ensure_ascii=False) + "\n")
-
-
-def is_duplicate_reason(reason: str) -> bool:
-    """True, если находка отброшена как дубликат, а не из-за цитаты."""
-    return bool(re.match(r"^дубликат", reason))
