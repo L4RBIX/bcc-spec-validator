@@ -91,3 +91,14 @@ def test_hard_line_break_and_bold_line_heading(fixture, request):
     assert pseudo.kind == "heading"
     after = blocks[blocks.index(pseudo) + 1]
     assert after.text == "Текст под псевдозаголовком." and after.section.endswith("Коды > 777")
+
+
+@pytest.mark.parametrize("fixture", ["sample_md", "sample_pdf"])
+def test_bold_callouts_and_long_bold_lines_are_not_headings(fixture, request):
+    blocks = load(request.getfixturevalue(fixture))
+    by_text = {b.text: b for b in blocks}
+    assert by_text["Важно:"].kind == "para"  # кончается двоеточием
+    long_line = "Эта строка целиком жирная и заметно длиннее сорока символов"
+    assert len(long_line) > 40 and by_text[long_line].kind == "para"
+    assert by_text["Примечание"].kind == "para"  # слово-выноска
+    assert by_text["Текст примечания."].section == by_text["777"].section  # раздел не сменился

@@ -25,7 +25,11 @@ _MD_HR_RE = re.compile(r"^\s*([-*_])(\s*\1){2,}\s*$")
 _MD_FENCE_RE = re.compile(r"^\s*(```|~~~)")
 _MD_BOLD_LINE_RE = re.compile(r"^(\*\*|__)(?!\s)(.+?)(?<!\s)\1$")
 _PSEUDO_HEADING_LEVEL = 7  # строка целиком жирным: заголовок ниже h6
-_PSEUDO_HEADING_MAX = 120
+_PSEUDO_HEADING_MAX = 40
+# Жирные слова-выноски -- это не заголовки разделов.
+_CALLOUT_WORDS = frozenset(
+    "важно примечание примечания внимание замечание пример примеры note warning important example tip".split()
+)
 _SENTENCE_END = (".", ":", ";", ",")
 
 
@@ -81,11 +85,14 @@ class _Sections:
 
 
 def _is_pseudo_heading(text: str) -> bool:
-    """Короткая строка без завершающей пунктуации и маркера списка -- кандидат в заголовок."""
+    """Строка целиком жирным -- заголовок, только если она короткая (<= 40 символов), не кончается
+    двоеточием или другой пунктуацией, не пункт списка и не слово-выноска («Важно», «Примечание»).
+    """
     return (
         0 < len(text) <= _PSEUDO_HEADING_MAX
         and not text.endswith(_SENTENCE_END)
         and not _BULLET_RE.match(text)
+        and text.lower().strip("!") not in _CALLOUT_WORDS
     )
 
 
