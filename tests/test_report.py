@@ -96,9 +96,7 @@ def test_verdict_levels():
 
 
 def _heading(bid: str, section: str) -> Block:
-    return Block(
-        block_id=bid, section=section, page=None, line=1, kind="heading", text=section.split(" > ")[-1]
-    )
+    return Block(block_id=bid, section=section, page=None, line=1, kind="heading", text=section.split(" > ")[-1])
 
 
 def test_single_root_h1_hidden_in_output_only():

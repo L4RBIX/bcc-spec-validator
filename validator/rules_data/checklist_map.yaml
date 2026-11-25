@@ -1,0 +1,55 @@
+# Универсальный справочник, не привязан к конкретному ТЗ.
+# Сопоставление пункта шаблонного чек-листа ревью с проверками агента.
+# keywords -- основы слов в тексте пункта (первое совпадение по порядку записей);
+# criteria -- критерии находок, которые говорят «Нет»;
+# addressee -- находки с этим адресатом говорят «Нет»;
+# kinds -- типы требований: если их в документе нет и пункт допускает «Не требуется», ответ «Не требуется»;
+# present -- основы слов в заголовках разделов: раздела нет -- ответ «Нет»;
+# search -- основы слов в тексте документа (вне самого чек-листа): не найдено -- ответ «Нет»;
+# require_both -- находка должна совпасть и по критерию, и по адресату.
+- name: тестируемость
+  keywords: ["протестир", "тестир", "проверяем"]
+  criteria: ["verifiable", "set_validatable"]
+- name: противоречия
+  keywords: ["противореч"]
+  criteria: ["set_consistent", "correct"]
+- name: версионность
+  keywords: ["версион", "верси"]
+  criteria: ["modifiable"]
+- name: информационная безопасность
+  keywords: ["безопасност", "иб "]
+  addressee: "ИБ"
+- name: интеграция
+  keywords: ["интеграц"]
+  kinds: ["INT", "API"]
+  criteria: ["correct", "set_consistent", "complete"]
+- name: откат
+  keywords: ["откат", "rollback"]
+  search: ["откат", "rollback", "скрыти", "скрыть", "feature flag", "фича-флаг", "feature toggle"]
+- name: sequence-диаграммы
+  keywords: ["sequence", "диаграм", "взаимодейств"]
+  present: ["sequence", "диаграм", "взаимодейств"]
+- name: UX/UI
+  keywords: ["ux", "ui", "дизайн", "макет"]
+  present: ["дизайн", "ui", "ux", "макет", "интерфейс"]
+- name: модель данных
+  keywords: ["модель данных", "поток"]
+  present: ["данн", "data", "модель"]
+- name: архитектура
+  keywords: ["архитектур"]
+  present: ["архитектур"]
+  addressee: "архитектор"
+- name: бизнес-процесс
+  keywords: ["бизнес-процесс", "bpmn"]
+  present: ["bpmn", "бизнес-процесс", "процесс"]
+- name: согласование
+  keywords: ["согласован"]
+  criteria: ["conforming"]
+  addressee: "BO"
+  require_both: true
+- name: структура и шаблон
+  keywords: ["структурирован", "шаблон", "стандарт"]
+  criteria: ["conforming", "set_comprehensible"]
+- name: покрытие бизнес-требований
+  keywords: ["покрывает бизнес", "бизнес-требован", "зафиксирован"]
+  criteria: ["set_complete", "complete", "necessary"]

@@ -47,8 +47,12 @@ def test_e2e_fake_provider(fixture, request, tmp_path):
 def test_e2e_example_document(name, tmp_path):
     res = run_cli(str(ROOT / "examples" / name), str(tmp_path / "r.md"), "--provider", "fake", cwd=tmp_path)
     assert res.returncode == 0, res.stderr
-    m = re.match(r"(\d+) требований", res.stdout)
-    assert m and int(m.group(1)) > 0
+    m = re.match(r"(\d+) требований, (\d+) находок", res.stdout)
+    assert m and int(m.group(1)) > 0 and int(m.group(2)) > 0, res.stdout
+    report = (tmp_path / "r.md").read_text(encoding="utf-8")
+    assert "## 7. Чек-лист ревью, заполненный агентом" in report
+    dropped = (tmp_path / "out" / "dropped.jsonl").read_text(encoding="utf-8")
+    assert dropped == "", "все цитаты правил должны подтверждаться документом"
 
 
 def test_missing_file(tmp_path):

@@ -14,14 +14,16 @@ from dotenv import load_dotenv
 from validator import ingest, llm
 from validator.check_item import check_items
 from validator.check_set import check_set
+from validator.checklist import fill_checklist
 from validator.facts import extract_facts
 from validator.questions import make_questions
 from validator.report_html import render_html
 from validator.report_md import render_markdown
+from validator.rules import run_rules
 from validator.runinfo import RunInfo, agent_version, almaty_now, count_lines, file_sha256
 from validator.segment import segment
 from validator.simulate import simulate
-from validator.verify import verify, write_dropped
+from validator.verify import attach_req_ids, verify, write_dropped
 
 ARTIFACTS_DIR = Path("out")
 LLM_LOG = ARTIFACTS_DIR / "llm_log.jsonl"
@@ -44,9 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--interactive", action="store_true", help="задать вопросы авторам в терминале")
     p.add_argument("--answers", type=Path, help="YAML с ответами на вопросы (вместо --interactive)")
     p.add_argument("--no-cache", action="store_true", help="не использовать кэш ответов LLM")
-    p.add_argument(
-        "--provider", choices=llm.PROVIDERS, default="gemini", help="провайдер LLM (fake -- без ключа)"
-    )
+    p.add_argument("--provider", choices=llm.PROVIDERS, default="gemini", help="провайдер LLM (fake -- без ключа)")
     return p
 
 
@@ -54,9 +54,7 @@ def _check_inputs(args: argparse.Namespace) -> None:
     if not args.doc.is_file():
         raise CliError(f"файл документа не найден: {args.doc}")
     if args.doc.suffix.lower() not in ingest.SUPPORTED_SUFFIXES:
-        raise CliError(
-            f"формат «{args.doc.suffix or 'без расширения'}» не поддерживается, нужен PDF, MD или DOCX"
-        )
+        raise CliError(f"формат «{args.doc.suffix or 'без расширения'}» не поддерживается, нужен PDF, MD или DOCX")
     if args.report.suffix.lower() != ".md":
         raise CliError(f"отчёт должен быть файлом .md: {args.report}")
     if args.answers is not None and not args.answers.is_file():
@@ -80,8 +78,10 @@ def run(args: argparse.Namespace) -> tuple[int, int, int]:
         raise CliError(f"в документе не найден текст (возможно, скан без текстового слоя): {args.doc}")
     reqs = segment(blocks)
     facts = extract_facts(reqs)
-    raw = check_items(reqs, blocks) + simulate(facts, reqs) + check_set(reqs, facts, blocks)
+    raw = run_rules(blocks) + check_items(reqs, blocks) + simulate(facts, reqs) + check_set(reqs, facts, blocks)
     findings, dropped = verify(raw, blocks)
+    findings = attach_req_ids(findings, reqs, blocks)
+    checklist = fill_checklist(blocks, findings, reqs)
     write_dropped(dropped, DROPPED_LOG)
     make_questions(findings)  # вопросы попадут в отчёт на этапе 2
     if args.interactive or args.answers:
@@ -103,7 +103,7 @@ def run(args: argparse.Namespace) -> tuple[int, int, int]:
         dropped_duplicates=status["duplicate"],
         partial_quotes=sum(len(d.lost_quotes) for d in dropped if d.status == "partial"),
     )
-    md = render_markdown(info, blocks, reqs, findings)
+    md = render_markdown(info, blocks, reqs, findings, checklist)
     _write(args.report, md)
     if args.html:
         _write(args.html, render_html(md, f"Отчёт: {info.doc_name}"))

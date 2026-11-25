@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 
+from validator.checklist import ChecklistItem
+from validator.doc import display_section, root_heading
 from validator.runinfo import RunInfo
 from validator.schema import CRITERIA, SEVERITY_ORDER, Block, Finding, Requirement
 from validator.verify import DocIndex
@@ -69,19 +71,6 @@ def cell(text: str) -> str:
     return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", "<br>").strip()
 
 
-def root_heading(blocks: list[Block]) -> str | None:
-    """Заголовок верхнего уровня, если он в документе единственный (обычно название документа)."""
-    tops = {b.text for b in blocks if b.kind == "heading" and " > " not in b.section}
-    return tops.pop() if len(tops) == 1 else None
-
-
-def display_section(section: str, root: str | None) -> str:
-    """Путь раздела для вывода: без единственного корневого H1. Данные блока не меняются."""
-    if root and section.startswith(root + " > "):
-        return section[len(root) + 3 :]
-    return section
-
-
 def format_location(block: Block | None, input_format: str, root: str | None = None) -> str:
     """«раздел «X», стр. N, строка M» -- ссылка на место в документе."""
     if block is None:
@@ -117,9 +106,13 @@ class _Ctx:
 
 
 def render_markdown(
-    run: RunInfo, blocks: list[Block], reqs: list[Requirement], findings: list[Finding]
+    run: RunInfo,
+    blocks: list[Block],
+    reqs: list[Requirement],
+    findings: list[Finding],
+    checklist: list[ChecklistItem] | None = None,
 ) -> str:
-    """Собирает полный Markdown-отчёт."""
+    """Собирает полный Markdown-отчёт. Раздел чек-листа -- только если в документе есть чек-лист."""
     ctx = _Ctx(run, blocks, reqs, findings)
     parts = [
         f"# Отчёт о проверке требований: {run.doc_name}",
@@ -130,6 +123,8 @@ def render_markdown(
         _summary(ctx),
         _conclusion(ctx),
     ]
+    if checklist is not None:
+        parts.append(_checklist(ctx, checklist))
     return "\n\n".join(p.rstrip() for p in parts) + "\n"
 
 
@@ -184,7 +179,7 @@ def _criterion_label(criterion: str) -> str:
 
 
 def render_finding(f: Finding, ctx: _Ctx, heading: str = "####") -> str:
-    """Карточка одной находки с цитатами и ссылками на место."""
+    """Описание одной находки с цитатами и ссылками на место."""
     lines = [
         f"{heading} {f.finding_id} · {SEVERITY_RU[f.severity]} · {_criterion_label(f.criterion)}",
         "",
@@ -303,4 +298,28 @@ def _conclusion(ctx: _Ctx) -> str:
     for i, f in enumerate(top, 1):
         where = ctx.quote_location(f.quotes[0])
         lines.append(f"{i}. {f.finding_id} ({SEVERITY_RU[f.severity]}): {f.fix} Место: {where}.")
+    return "\n".join(lines)
+
+
+CHECKLIST_TITLE = "## 7. Чек-лист ревью, заполненный агентом"
+
+
+def _checklist(ctx: _Ctx, items: list[ChecklistItem]) -> str:
+    lines = [CHECKLIST_TITLE, ""]
+    if not items:
+        lines.append("Чек-лист найден, но пунктов с вариантами выбора в нём нет.")
+        return "\n".join(lines)
+    where = format_location(items[0].row, ctx.run.input_format, ctx.root)
+    counts = Counter(i.answer for i in items)
+    lines += [
+        f"Чек-лист из документа ({where}) заполнен по результатам проверки: "
+        + ", ".join(f"{a} -- {n}" for a, n in counts.items())
+        + ".",
+        "",
+        "| № | Пункт чек-листа | Ответ агента | Обоснование | Находки |",
+        "| ---: | :--- | :--- | :--- | :--- |",
+    ]
+    for n, it in enumerate(items, 1):
+        ids = ", ".join(it.finding_ids) or "—"
+        lines.append(f"| {n} | {cell(it.text)} | **{it.answer}** | {cell(it.reason)} | {ids} |")
     return "\n".join(lines)

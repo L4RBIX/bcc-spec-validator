@@ -116,9 +116,7 @@ def md_to_html(md: str) -> str:
 
 
 def _starts_block(s: str) -> bool:
-    return bool(
-        s.startswith(("|", "```", "~~~", "#")) or _BULLET.match(s) or _ORDERED.match(s) or _HR.match(s)
-    )
+    return bool(s.startswith(("|", "```", "~~~", "#")) or _BULLET.match(s) or _ORDERED.match(s) or _HR.match(s))
 
 
 def _table_html(rows: list[str]) -> str:

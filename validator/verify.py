@@ -15,7 +15,7 @@ from typing import Literal
 from pydantic import BaseModel
 from rapidfuzz import fuzz
 
-from validator.schema import CRITERIA, Block, Finding
+from validator.schema import CRITERIA, Block, Finding, Requirement
 
 FUZZY_THRESHOLD = 90.0
 MIN_FUZZY_LEN = 12  # короче этого нечёткий поиск не применяется: слишком много ложных совпадений
@@ -251,3 +251,24 @@ def write_dropped(dropped: list[DroppedFinding], path: Path) -> None:
     with path.open("w", encoding="utf-8") as fh:
         for d in dropped:
             fh.write(json.dumps(d.model_dump(), ensure_ascii=False) + "\n")
+
+
+def attach_req_ids(findings: list[Finding], reqs: list[Requirement], blocks: list[Block]) -> list[Finding]:
+    """Находкам без req_ids (правила работают по блокам) проставляет требования, чьи блоки покрывают цитаты."""
+    index = DocIndex(blocks)
+    by_block: dict[str, list[str]] = {}
+    for r in reqs:
+        for bid in r.block_ids:
+            by_block.setdefault(bid, []).append(r.req_id)
+    out = []
+    for f in findings:
+        if f.req_ids:
+            out.append(f)
+            continue
+        ids: list[str] = []
+        for q in f.quotes:
+            m = index.find(q)
+            for b in m.blocks if m else ():
+                ids.extend(by_block.get(b.block_id, []))
+        out.append(f.model_copy(update={"req_ids": _unique(ids)}))
+    return out

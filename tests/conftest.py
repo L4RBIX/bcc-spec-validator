@@ -34,9 +34,7 @@ def sample_docx(tmp_path_factory) -> Path:
     doc.add_heading("Бронирование переговорных", level=1)
     doc.add_paragraph("Учебный синтетический документ для тестов агента.")
     doc.add_heading("Функциональные требования", level=2)
-    doc.add_paragraph(
-        "ТР-1. Сотрудник бронирует комнату на интервал от 15 до 240 минут.", style="List Bullet"
-    )
+    doc.add_paragraph("ТР-1. Сотрудник бронирует комнату на интервал от 15 до 240 минут.", style="List Bullet")
     doc.add_paragraph("ТР-2. Бронь отменяется автоматически.", style="List Bullet")
     doc.add_heading("Ответ", level=2)
     table = doc.add_table(rows=2, cols=3)
