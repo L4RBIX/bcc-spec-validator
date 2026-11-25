@@ -1,0 +1,26 @@
+# Секреты и локальное окружение
+.env
+.venv/
+venv/
+
+# Кэш и результаты прогонов
+.cache/
+out/
+
+# Локальные рабочие заметки команды
+CONTEXT.md
+STAGES.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
